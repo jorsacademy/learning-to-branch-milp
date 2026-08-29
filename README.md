@@ -132,6 +132,26 @@ Positive `paired_node_reduction_percent` means the comparison policy processed f
 
 Wall-clock time remains a secondary metric for these small Python experiments because interpreter, model-inference, and LP-solver overhead can dominate. Node count and LP solve count are the primary algorithmic metrics.
 
+## Reproducible research smoke run
+
+The `Research Smoke Benchmark` GitHub Actions workflow trains fresh MLP-MSE, MLP-listwise, and GNN checkpoints, runs the paired repeated-seed benchmark, runs a small OOD benchmark, renders a single Markdown summary table, and uploads all outputs as one workflow artifact.
+
+The artifact contains:
+
+- `checkpoints/branching_mse.pt`
+- `checkpoints/branching_listwise.pt`
+- `checkpoints/branching_gnn.pt`
+- `results/benchmark.txt`
+- `results/generalization.txt`
+- `results/RESULTS.md`
+
+The smoke preset deliberately uses smaller training and evaluation budgets than the full research commands above. Its purpose is end-to-end reproducibility and regression detection, not final scientific claims. `scripts/render_benchmark_table.py` can also convert any saved benchmark stdout into the same Markdown table format:
+
+```bash
+python scripts/benchmark.py ... | tee results/benchmark.txt
+python scripts/render_benchmark_table.py results/benchmark.txt results/RESULTS.md
+```
+
 ## Generalization benchmark
 
 ```bash
@@ -166,9 +186,11 @@ Scenarios include nominal `12v/5c`, larger `16v/5c`, larger `20v/8c`, tighter pa
 │   ├── train.py
 │   ├── train_gnn.py
 │   ├── benchmark.py
-│   └── generalization.py
+│   ├── generalization.py
+│   └── render_benchmark_table.py
 ├── tests/
 ├── .github/workflows/ci.yml
+├── .github/workflows/research-smoke.yml
 ├── pyproject.toml
 └── LICENSE
 ```
