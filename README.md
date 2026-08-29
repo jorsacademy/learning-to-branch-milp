@@ -15,8 +15,9 @@ This repository builds that pipeline from first principles on small binary MILPs
 - score candidates with strong branching,
 - collect expert labels across complete search-tree trajectories,
 - preserve one candidate group per B&B node,
-- extract candidate-level features,
 - train an MLP with score regression or listwise expert-choice ranking,
+- represent MILPs as bipartite variable-constraint graphs,
+- train a pure-PyTorch message-passing GNN branching policy,
 - compare learned branching against classical baselines with repeated-seed statistics,
 - evaluate learned policies under size and packing-distribution shift.
 
@@ -24,7 +25,7 @@ The implementation is intentionally small and transparent. It is not a replaceme
 
 ## Initial problem family
 
-The first benchmark uses random binary packing MILPs:
+The benchmark uses random binary packing MILPs:
 
 \[
 \max c^T x
@@ -36,37 +37,36 @@ subject to
 Ax \le b, \qquad x \in \{0,1\}^n.
 \]
 
-Internally the LP relaxation is solved with `scipy.optimize.linprog` after converting the maximization objective to minimization form. The generator can also fix the RHS `tightness` as a fraction of each row's total coefficient mass, enabling controlled distribution-shift experiments.
+Internally the LP relaxation is solved with `scipy.optimize.linprog`. The generator also supports controlled RHS `tightness` for distribution-shift experiments.
 
 ## Branching policies
 
 - **Most fractional:** branch on the variable closest to 0.5.
-- **Strong branching:** temporarily solve both child LP relaxations for every candidate and choose the candidate with the strongest bound improvement.
-- **Learned policy:** rank candidate variables from inexpensive node/variable features using an MLP trained on strong-branching labels.
+- **Strong branching:** solve both child LP relaxations for each candidate and choose the strongest bound improvement.
+- **MLP learned policy:** rank candidates from inexpensive hand-engineered features.
+- **Bipartite GNN policy:** score candidates after variable-to-constraint and constraint-to-variable message passing over the MILP coefficient graph.
 
-## Imitation data
+## Imitation data and ranking
 
-The default training dataset follows strong branching through multiple branch-and-bound nodes rather than sampling only root nodes. At every fractional LP node:
+Full-tree imitation data follows strong branching through multiple B&B nodes. Candidate features and normalized strong-branching scores are stored per node. Two MLP objectives are available:
 
-1. candidate variables are identified,
-2. strong-branching scores are computed,
-3. candidate features and normalized expert scores are stored as one candidate group,
-4. the best strong-branching variable is selected,
-5. the resulting child nodes are explored depth-first,
-6. incumbent-based LP-bound pruning is applied.
+- `mse`: regress normalized strong-branching scores.
+- `listwise`: cross-entropy over the expert's top-ranked candidate at each node.
 
-This exposes the learned model to the distribution shift that occurs between the root relaxation and deeper search-tree states. The original root-only dataset remains available as a controlled baseline.
+Top-1 strong-branching agreement is used as the imitation metric.
 
-## Ranking objective
+## Bipartite GNN representation
 
-Two training objectives are available:
+The graph model uses:
 
-- `mse`: regress normalized strong-branching scores candidate by candidate.
-- `listwise`: treat each B&B node as a candidate list and minimize cross-entropy on the strong-branching expert's top-ranked variable.
+- one node for each variable,
+- one node for each constraint,
+- normalized MILP coefficients as bipartite edge weights,
+- variable features including LP value, fractionality, objective coefficient, and column density,
+- constraint features including RHS, LP activity, slack, and row density,
+- two-way message passing before candidate scoring.
 
-`listwise` is the default because branching is fundamentally a within-node ranking decision rather than an absolute score-prediction problem.
-
-The imitation metric is **top-1 strong-branching agreement**: the fraction of candidate groups where the learned policy and the expert choose the same variable.
+The GNN is implemented in pure PyTorch, without PyTorch Geometric or DGL. Inference graph construction does **not** call strong branching; expert calls are used only when generating labeled training states.
 
 ## Installation
 
@@ -77,9 +77,7 @@ python -m pip install --upgrade pip
 pip install -e ".[dev]"
 ```
 
-## Train
-
-Full-tree data and listwise ranking are the defaults:
+## Train MLP
 
 ```bash
 python scripts/train.py \
@@ -92,24 +90,28 @@ python scripts/train.py \
   --checkpoint checkpoints/branching_listwise.pt
 ```
 
-Train the score-regression baseline separately:
+MSE baseline:
 
 ```bash
-python scripts/train.py \
-  --instances 200 \
-  --vars 12 \
-  --constraints 5 \
-  --max-nodes-per-instance 64 \
-  --loss mse \
-  --epochs 200 \
-  --checkpoint checkpoints/branching_mse.pt
+python scripts/train.py --loss mse --checkpoint checkpoints/branching_mse.pt
 ```
 
-Root-only data remains available with `--dataset root`.
+## Train bipartite GNN
+
+```bash
+python scripts/train_gnn.py \
+  --instances 100 \
+  --vars 12 \
+  --constraints 5 \
+  --max-nodes-per-instance 32 \
+  --epochs 100 \
+  --hidden-dim 64 \
+  --checkpoint checkpoints/branching_gnn.pt
+```
+
+The GNN is trained with listwise expert-choice cross entropy and reports training-set top-1 expert agreement.
 
 ## Statistical benchmark
-
-The benchmark treats each seed as an independent replicate. Within a seed, every branching policy is evaluated on exactly the same generated MILP instances. Metrics are first averaged within each seed; mean, sample standard deviation, and a normal-approximation 95% confidence-interval half-width are then computed across seed means.
 
 ```bash
 python scripts/benchmark.py \
@@ -121,17 +123,9 @@ python scripts/benchmark.py \
   --listwise-checkpoint checkpoints/branching_listwise.pt
 ```
 
-The comparison includes most-fractional, strong branching, learned MSE, and learned listwise policies, with node count, LP solves, wall-clock time, objective consistency checks, held-out expert agreement, and mean / sample std / 95% CI across seeds.
+Metrics include branch-and-bound nodes, LP solves, wall-clock time, objective consistency, held-out expert agreement, and mean / sample std / normal-approximation 95% CI across seeds.
 
 ## Generalization benchmark
-
-A separate OOD benchmark evaluates one learned checkpoint on problem distributions that differ from the nominal `12 variables / 5 constraints` training regime:
-
-- in-distribution `12v / 5c`,
-- larger `16v / 5c`,
-- larger and more constrained `20v / 8c`,
-- tighter packing with `tightness=0.30`,
-- looser packing with `tightness=0.70`.
 
 ```bash
 python scripts/generalization.py \
@@ -140,7 +134,7 @@ python scripts/generalization.py \
   --seeds 2000 2001 2002 2003 2004
 ```
 
-Each scenario uses paired instances across most-fractional, strong, and learned branching and reports repeated-seed mean/std/95% CI for B&B node count, LP solves, and wall-clock time. This tests whether the candidate-feature MLP transfers beyond the distribution used to generate its imitation data.
+Scenarios include the nominal `12v/5c` distribution, larger `16v/5c`, `20v/8c`, tighter packing, and looser packing.
 
 ## Project structure
 
@@ -153,11 +147,15 @@ Each scenario uses paired instances across most-fractional, strong, and learned 
 │   ├── features.py
 │   ├── dataset.py
 │   ├── models.py
+│   ├── graph.py
+│   ├── graph_dataset.py
+│   ├── gnn.py
 │   ├── policies.py
 │   ├── statistics.py
 │   └── training.py
 ├── scripts/
 │   ├── train.py
+│   ├── train_gnn.py
 │   ├── benchmark.py
 │   └── generalization.py
 ├── tests/
@@ -175,9 +173,7 @@ ruff check .
 
 ## Research lineage
 
-This repository follows the learning-to-branch line associated with Khalil et al. and Gasse et al., while keeping the first implementation solver-independent and educational.
-
-The current MLP remains a baseline. Planned stages are graph-based MILP representations and stronger classical branching baselines such as pseudocost and reliability branching.
+The repository follows the learning-to-branch line associated with Khalil et al. and Gasse et al. The MLP remains a transparent baseline; the bipartite message-passing model is the first graph-based branching stage. The next planned stage is to benchmark the GNN directly against the MLP and add stronger classical baselines such as pseudocost and reliability branching.
 
 ## License
 
