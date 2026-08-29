@@ -18,8 +18,8 @@ This repository builds that pipeline from first principles on small binary MILPs
 - train an MLP with score regression or listwise expert-choice ranking,
 - represent MILPs as bipartite variable-constraint graphs,
 - train a pure-PyTorch message-passing GNN branching policy,
-- compare MLP and GNN learned policies against classical baselines with repeated-seed statistics,
-- evaluate learned policies under size and packing-distribution shift.
+- compare learned policies against most-fractional, pseudocost, and strong branching,
+- evaluate policies with repeated-seed statistics and distribution-shift benchmarks.
 
 The implementation is intentionally small and transparent. It is not a replacement for production solvers such as SCIP, Gurobi, or CPLEX.
 
@@ -42,9 +42,12 @@ Internally the LP relaxation is solved with `scipy.optimize.linprog`. The genera
 ## Branching policies
 
 - **Most fractional:** branch on the variable closest to 0.5.
+- **Pseudocost:** maintain historical per-variable down/up unit bound degradations from solved child LPs, then score candidates using the predicted two-sided degradation.
 - **Strong branching:** solve both child LP relaxations for each candidate and choose the strongest bound improvement.
 - **MLP learned policy:** rank candidates from inexpensive hand-engineered features.
 - **Bipartite GNN policy:** score candidates after variable-to-constraint and constraint-to-variable message passing over the MILP coefficient graph.
+
+Pseudocost branching starts with neutral fallback estimates and updates its statistics online as the search observes child-node LP bounds. It therefore avoids the repeated probing LP solves required by strong branching.
 
 ## Imitation data and ranking
 
@@ -113,7 +116,7 @@ The GNN is trained with listwise expert-choice cross entropy and reports trainin
 
 ## Statistical benchmark
 
-The repeated-seed benchmark can evaluate all learned models on exactly the same MILP instances:
+The repeated-seed benchmark evaluates active learned models and classical policies on exactly the same MILP instances:
 
 ```bash
 python scripts/benchmark.py \
@@ -129,6 +132,7 @@ python scripts/benchmark.py \
 The comparison includes:
 
 - most-fractional branching,
+- pseudocost branching,
 - strong branching,
 - learned MLP score regression,
 - learned MLP listwise ranking,
@@ -137,7 +141,7 @@ The comparison includes:
 - LP solve count,
 - wall-clock time,
 - objective-consistency checks,
-- held-out strong-branching top-1 agreement for MLP and GNN models,
+- held-out strong-branching top-1 agreement for learned models,
 - mean / sample std / normal-approximation 95% CI across seeds.
 
 ## Generalization benchmark
@@ -152,7 +156,7 @@ python scripts/generalization.py \
   --seeds 2000 2001 2002 2003 2004
 ```
 
-Scenarios include the nominal `12v/5c` distribution, larger `16v/5c`, `20v/8c`, tighter packing, and looser packing. The same generated instance is solved by each active policy before repeated-seed summaries are computed.
+Scenarios include the nominal `12v/5c` distribution, larger `16v/5c`, `20v/8c`, tighter packing, and looser packing. Most-fractional, pseudocost, strong, and active learned policies solve the same generated instances before repeated-seed summaries are computed.
 
 ## Project structure
 
@@ -191,7 +195,7 @@ ruff check .
 
 ## Research lineage
 
-The repository follows the learning-to-branch line associated with Khalil et al. and Gasse et al. The MLP remains a transparent baseline; the bipartite message-passing model provides a graph-based branching policy. The next planned stage is to add stronger classical baselines such as pseudocost and reliability branching.
+The repository follows the learning-to-branch line associated with Khalil et al. and Gasse et al. The MLP remains a transparent baseline, the bipartite message-passing model provides a graph-based learned policy, and pseudocost now provides a stronger low-overhead classical baseline. The next classical stage is reliability branching, which combines pseudocost history with selective strong-branch probing for insufficiently observed candidates.
 
 ## License
 
