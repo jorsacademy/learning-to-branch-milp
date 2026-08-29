@@ -18,7 +18,7 @@ This repository builds that pipeline from first principles on small binary MILPs
 - train an MLP with score regression or listwise expert-choice ranking,
 - represent MILPs as bipartite variable-constraint graphs,
 - train a pure-PyTorch message-passing GNN branching policy,
-- compare learned branching against classical baselines with repeated-seed statistics,
+- compare MLP and GNN learned policies against classical baselines with repeated-seed statistics,
 - evaluate learned policies under size and packing-distribution shift.
 
 The implementation is intentionally small and transparent. It is not a replacement for production solvers such as SCIP, Gurobi, or CPLEX.
@@ -113,6 +113,8 @@ The GNN is trained with listwise expert-choice cross entropy and reports trainin
 
 ## Statistical benchmark
 
+The repeated-seed benchmark can evaluate all learned models on exactly the same MILP instances:
+
 ```bash
 python scripts/benchmark.py \
   --instances-per-seed 20 \
@@ -120,21 +122,37 @@ python scripts/benchmark.py \
   --constraints 5 \
   --seeds 1000 1001 1002 1003 1004 \
   --mse-checkpoint checkpoints/branching_mse.pt \
-  --listwise-checkpoint checkpoints/branching_listwise.pt
+  --listwise-checkpoint checkpoints/branching_listwise.pt \
+  --gnn-checkpoint checkpoints/branching_gnn.pt
 ```
 
-Metrics include branch-and-bound nodes, LP solves, wall-clock time, objective consistency, held-out expert agreement, and mean / sample std / normal-approximation 95% CI across seeds.
+The comparison includes:
+
+- most-fractional branching,
+- strong branching,
+- learned MLP score regression,
+- learned MLP listwise ranking,
+- learned bipartite GNN,
+- branch-and-bound node count,
+- LP solve count,
+- wall-clock time,
+- objective-consistency checks,
+- held-out strong-branching top-1 agreement for MLP and GNN models,
+- mean / sample std / normal-approximation 95% CI across seeds.
 
 ## Generalization benchmark
+
+MLP and GNN checkpoints can be evaluated together under distribution shift:
 
 ```bash
 python scripts/generalization.py \
   --checkpoint checkpoints/branching_listwise.pt \
+  --gnn-checkpoint checkpoints/branching_gnn.pt \
   --instances-per-seed 10 \
   --seeds 2000 2001 2002 2003 2004
 ```
 
-Scenarios include the nominal `12v/5c` distribution, larger `16v/5c`, `20v/8c`, tighter packing, and looser packing.
+Scenarios include the nominal `12v/5c` distribution, larger `16v/5c`, `20v/8c`, tighter packing, and looser packing. The same generated instance is solved by each active policy before repeated-seed summaries are computed.
 
 ## Project structure
 
@@ -173,7 +191,7 @@ ruff check .
 
 ## Research lineage
 
-The repository follows the learning-to-branch line associated with Khalil et al. and Gasse et al. The MLP remains a transparent baseline; the bipartite message-passing model is the first graph-based branching stage. The next planned stage is to benchmark the GNN directly against the MLP and add stronger classical baselines such as pseudocost and reliability branching.
+The repository follows the learning-to-branch line associated with Khalil et al. and Gasse et al. The MLP remains a transparent baseline; the bipartite message-passing model provides a graph-based branching policy. The next planned stage is to add stronger classical baselines such as pseudocost and reliability branching.
 
 ## License
 
