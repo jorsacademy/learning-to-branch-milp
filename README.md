@@ -2,7 +2,7 @@
 
 A research-oriented implementation of **machine-learning-guided branching for mixed-integer linear programming (MILP)**.
 
-> **License:** source-available for non-commercial use only. See `LICENSE`.
+> **License:** source-available for non-commercial use only under PolyForm Noncommercial 1.0.0. See `LICENSE`.
 
 ## Motivation
 
@@ -13,7 +13,7 @@ This repository builds that pipeline from first principles on small binary MILPs
 - solve LP relaxations,
 - identify fractional branching candidates,
 - score candidates with strong branching,
-- collect expert labels across complete search-tree trajectories,
+- collect expert labels across multi-level branch-and-bound search trajectories,
 - preserve one candidate group per B&B node,
 - train MLP score-regression and listwise-ranking policies,
 - represent MILPs as bipartite variable-constraint graphs,
@@ -52,7 +52,7 @@ The default reliability threshold is `2` observations per direction and can be c
 
 ## Imitation data and ranking
 
-Full-tree imitation data follows strong branching through multiple B&B nodes. Candidate features and normalized strong-branching scores are stored per node. Two MLP objectives are available:
+The default tree dataset follows strong branching through multiple B&B levels, subject to `--max-nodes-per-instance`. Candidate features and normalized strong-branching scores are stored per node. Two MLP objectives are available:
 
 - `mse`: regress normalized strong-branching scores.
 - `listwise`: cross-entropy over the expert's top-ranked candidate at each node.
@@ -120,23 +120,17 @@ python scripts/benchmark.py \
 
 The comparison includes most-fractional, pseudocost, reliability, strong branching, MLP-MSE, MLP-listwise, and GNN. All policies solve the same generated instances within a seed. Metrics are averaged within seed before cross-seed inference.
 
-For each metric, the benchmark reports mean, sample standard deviation, and a two-sided **Student-t 95% confidence interval** over seed-level replicates. Student-t intervals are used instead of a fixed 1.96 normal approximation because the default number of seeds is small.
+For each metric, the benchmark reports mean, sample standard deviation, and a two-sided **Student-t 95% confidence interval** over seed-level replicates. The benchmark also reports paired node deltas and percentage node reductions relative to most-fractional and reliability branching.
 
-The benchmark also reports paired node comparisons:
-
-- comparison-minus-reference node delta,
-- percentage node reduction relative to most-fractional,
-- percentage node reduction relative to reliability branching where applicable.
-
-Positive `paired_node_reduction_percent` means the comparison policy processed fewer branch-and-bound nodes than the reference policy. Paired summaries preserve the fact that policies are evaluated on the same seed-level instance sets and are generally more informative than comparing two independent marginal confidence intervals.
-
-Wall-clock time remains a secondary metric for these small Python experiments because interpreter, model-inference, and LP-solver overhead can dominate. Node count and LP solve count are the primary algorithmic metrics.
+Positive `paired_node_reduction_percent` means the comparison policy processed fewer branch-and-bound nodes than the reference policy. Wall-clock time remains a secondary metric for these small Python experiments; node count and LP solve count are the primary algorithmic metrics.
 
 ## Reproducible research smoke run
 
-The `Research Smoke Benchmark` GitHub Actions workflow trains fresh MLP-MSE, MLP-listwise, and GNN checkpoints, runs the paired repeated-seed benchmark, runs a small OOD benchmark, renders a single Markdown summary table, and uploads all outputs as one workflow artifact.
+The `Research Smoke Benchmark` GitHub Actions workflow trains fresh MLP-MSE, MLP-listwise, and GNN checkpoints, runs the paired repeated-seed benchmark, runs a small OOD benchmark, renders a Markdown result table, and uploads all outputs as one workflow artifact.
 
-The artifact contains:
+A successful reference smoke run is recorded in [`results/SMOKE_RESULTS.md`](results/SMOKE_RESULTS.md). Those numbers validate the end-to-end pipeline only; they are deliberately based on small training and evaluation budgets and are **not final scientific performance claims**.
+
+The workflow artifact contains:
 
 - `checkpoints/branching_mse.pt`
 - `checkpoints/branching_listwise.pt`
@@ -145,7 +139,7 @@ The artifact contains:
 - `results/generalization.txt`
 - `results/RESULTS.md`
 
-The smoke preset deliberately uses smaller training and evaluation budgets than the full research commands above. Its purpose is end-to-end reproducibility and regression detection, not final scientific claims. `scripts/render_benchmark_table.py` can also convert any saved benchmark stdout into the same Markdown table format:
+`scripts/render_benchmark_table.py` can convert saved benchmark stdout into the same Markdown table format:
 
 ```bash
 python scripts/benchmark.py ... | tee results/benchmark.txt
@@ -164,6 +158,19 @@ python scripts/generalization.py \
 ```
 
 Scenarios include nominal `12v/5c`, larger `16v/5c`, larger `20v/8c`, tighter packing, and looser packing. All active policies solve the same generated instances before repeated-seed summaries are computed.
+
+## Scope and limitations
+
+This repository is a transparent research sandbox, not an industrial MILP solver integration. In particular:
+
+- the branch-and-bound engine is custom and intentionally minimal,
+- LP relaxations are solved by SciPy/HiGHS rather than SCIP, Gurobi, or CPLEX callbacks,
+- experiments currently target one synthetic binary packing family,
+- strong branching scores use the repository's explicit two-child bound-degradation formula,
+- search-tree training data can be truncated by the configured per-instance node budget,
+- the included smoke results are regression/reproducibility evidence rather than publication-scale statistical evidence.
+
+These constraints are intentional: the code prioritizes inspectability, reproducibility, and direct comparison of branching mechanisms.
 
 ## Project structure
 
@@ -188,6 +195,8 @@ Scenarios include nominal `12v/5c`, larger `16v/5c`, larger `20v/8c`, tighter pa
 │   ├── benchmark.py
 │   ├── generalization.py
 │   └── render_benchmark_table.py
+├── results/
+│   └── SMOKE_RESULTS.md
 ├── tests/
 ├── .github/workflows/ci.yml
 ├── .github/workflows/research-smoke.yml
@@ -202,9 +211,15 @@ pytest
 ruff check .
 ```
 
+CI runs lint and tests on Python 3.11 and 3.12.
+
 ## Research lineage
 
-The repository follows the learning-to-branch line associated with Khalil et al. and Gasse et al. The current implementation contains a progression from low-cost hand-designed branching rules through selective strong probing to learned MLP/GNN policies, all evaluated under the same transparent branch-and-bound engine and a paired repeated-seed protocol.
+The repository follows the learning-to-branch line associated with Khalil et al. and Gasse et al. The implementation spans low-cost hand-designed branching rules, selective strong probing, MLP imitation, and bipartite GNN imitation under one transparent branch-and-bound engine and one paired repeated-seed evaluation protocol.
+
+## Project status
+
+**Feature-complete for the intended research-sandbox scope.** Future work should be treated as a new experimental phase rather than required repository completion, such as SCIP/PySCIPOpt integration, additional MILP families, or publication-scale training budgets.
 
 ## License
 
