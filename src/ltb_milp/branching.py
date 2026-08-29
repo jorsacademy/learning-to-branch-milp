@@ -15,6 +15,57 @@ class BranchDecision:
     extra_lp_solves: int = 0
 
 
+@dataclass
+class PseudocostState:
+    """Running down/up objective degradation estimates for each variable."""
+
+    down_sum: np.ndarray
+    down_count: np.ndarray
+    up_sum: np.ndarray
+    up_count: np.ndarray
+
+    @classmethod
+    def zeros(cls, n_vars: int) -> "PseudocostState":
+        if n_vars <= 0:
+            raise ValueError("n_vars must be positive")
+        return cls(
+            down_sum=np.zeros(n_vars, dtype=float),
+            down_count=np.zeros(n_vars, dtype=int),
+            up_sum=np.zeros(n_vars, dtype=float),
+            up_count=np.zeros(n_vars, dtype=int),
+        )
+
+    def update(self, variable: int, direction: str, gain: float, distance: float) -> None:
+        """Update a unit pseudocost from one observed child LP bound degradation."""
+        if direction not in {"down", "up"}:
+            raise ValueError("direction must be 'down' or 'up'")
+        if distance <= 0:
+            return
+        unit_cost = max(0.0, gain) / distance
+        if direction == "down":
+            self.down_sum[variable] += unit_cost
+            self.down_count[variable] += 1
+        else:
+            self.up_sum[variable] += unit_cost
+            self.up_count[variable] += 1
+
+    def means(self, candidates: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """Return down/up mean pseudocosts, using global observed means as fallback."""
+        observed_down = self.down_sum[self.down_count > 0] / self.down_count[self.down_count > 0]
+        observed_up = self.up_sum[self.up_count > 0] / self.up_count[self.up_count > 0]
+        fallback_down = float(observed_down.mean()) if observed_down.size else 1.0
+        fallback_up = float(observed_up.mean()) if observed_up.size else 1.0
+
+        down = np.full(candidates.size, fallback_down, dtype=float)
+        up = np.full(candidates.size, fallback_up, dtype=float)
+        for pos, variable in enumerate(candidates):
+            if self.down_count[variable] > 0:
+                down[pos] = self.down_sum[variable] / self.down_count[variable]
+            if self.up_count[variable] > 0:
+                up[pos] = self.up_sum[variable] / self.up_count[variable]
+        return down, up
+
+
 def fractional_candidates(x: np.ndarray, tol: float = 1e-7) -> np.ndarray:
     """Return indices of variables that are fractional in an LP solution."""
     return np.flatnonzero((x > tol) & (x < 1.0 - tol))
@@ -27,6 +78,18 @@ def most_fractional(x: np.ndarray) -> BranchDecision:
         raise ValueError("no fractional branching candidates")
     distances = np.abs(x[candidates] - 0.5)
     return BranchDecision(int(candidates[np.argmin(distances)]))
+
+
+def pseudocost_branch(x: np.ndarray, state: PseudocostState) -> BranchDecision:
+    """Choose the candidate with the largest estimated two-sided bound degradation."""
+    candidates = fractional_candidates(x)
+    if candidates.size == 0:
+        raise ValueError("no fractional branching candidates")
+    down_means, up_means = state.means(candidates)
+    down_gain = down_means * x[candidates]
+    up_gain = up_means * (1.0 - x[candidates])
+    scores = np.minimum(down_gain, up_gain) + 1e-6 * np.maximum(down_gain, up_gain)
+    return BranchDecision(int(candidates[np.argmax(scores)]))
 
 
 def strong_branch_scores(
