@@ -12,6 +12,14 @@ from ltb_milp.dataset import (
     collect_tree_strong_branching_dataset,
 )
 from ltb_milp.features import candidate_features
+from ltb_milp.gnn import (
+    BipartiteBranchingGNN,
+    gnn_branch_policy,
+    gnn_top1_expert_agreement,
+    train_gnn_branching_model,
+)
+from ltb_milp.graph import GraphBranchingState, GraphInputs, graph_inputs_from_node
+from ltb_milp.graph_dataset import collect_tree_graph_dataset
 from ltb_milp.models import BranchingMLP
 from ltb_milp.policies import learned_branch_policy
 from ltb_milp.problem import (
@@ -30,15 +38,22 @@ from ltb_milp.training import (
 
 __all__ = [
     "BinaryPackingMILP",
+    "BipartiteBranchingGNN",
     "BranchDecision",
     "BranchingDataset",
     "BranchingMLP",
+    "GraphBranchingState",
+    "GraphInputs",
     "LPSolution",
     "SolveResult",
     "candidate_features",
     "collect_root_strong_branching_dataset",
+    "collect_tree_graph_dataset",
     "collect_tree_strong_branching_dataset",
     "generate_binary_packing",
+    "gnn_branch_policy",
+    "gnn_top1_expert_agreement",
+    "graph_inputs_from_node",
     "learned_branch_policy",
     "listwise_expert_loss",
     "most_fractional",
@@ -49,4 +64,5 @@ __all__ = [
     "strong_branch_scores",
     "top1_expert_agreement",
     "train_branching_model",
+    "train_gnn_branching_model",
 ]
