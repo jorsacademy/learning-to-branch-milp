@@ -13,30 +13,28 @@ from ltb_milp.problem import BinaryPackingMILP
 
 
 @dataclass(frozen=True)
-class GraphBranchingState:
-    """One fractional B&B node represented as a bipartite variable-constraint graph."""
+class GraphInputs:
+    """Normalized bipartite graph features for one fractional B&B node."""
 
     variable_features: Tensor
     constraint_features: Tensor
     edge_weights: Tensor
     candidate_indices: Tensor
+
+
+@dataclass(frozen=True)
+class GraphBranchingState:
+    """Graph inputs paired with the strong-branching expert choice."""
+
+    inputs: GraphInputs
     expert_choice: int
 
 
-def graph_state_from_node(
-    problem: BinaryPackingMILP,
-    x: np.ndarray,
-    objective: float,
-    bounds: dict[int, tuple[float, float]] | None = None,
-) -> GraphBranchingState:
-    """Build normalized graph features and the strong-branching expert choice."""
+def graph_inputs_from_node(problem: BinaryPackingMILP, x: np.ndarray) -> GraphInputs:
+    """Build normalized graph features without invoking an expert branching rule."""
     candidates = fractional_candidates(x)
     if candidates.size == 0:
         raise ValueError("no fractional branching candidates")
-
-    scored_candidates, scores, _ = strong_branch_scores(problem, x, objective, bounds)
-    if not np.array_equal(candidates, scored_candidates):
-        raise RuntimeError("candidate ordering mismatch")
 
     objective_scale = max(float(np.max(np.abs(problem.c))), 1.0)
     rhs_scale = max(float(np.max(np.abs(problem.b))), 1.0)
@@ -61,10 +59,24 @@ def graph_state_from_node(
         ]
     ).astype(np.float32)
 
-    return GraphBranchingState(
+    return GraphInputs(
         variable_features=torch.from_numpy(variable_features),
         constraint_features=torch.from_numpy(constraint_features),
         edge_weights=torch.from_numpy((problem.A / coefficient_scale).astype(np.float32)),
         candidate_indices=torch.from_numpy(candidates.astype(np.int64)),
-        expert_choice=int(np.argmax(scores)),
     )
+
+
+def graph_state_from_node(
+    problem: BinaryPackingMILP,
+    x: np.ndarray,
+    objective: float,
+    bounds: dict[int, tuple[float, float]] | None = None,
+) -> GraphBranchingState:
+    """Build graph features and label the node with strong branching."""
+    inputs = graph_inputs_from_node(problem, x)
+    candidates = inputs.candidate_indices.numpy()
+    scored_candidates, scores, _ = strong_branch_scores(problem, x, objective, bounds)
+    if not np.array_equal(candidates, scored_candidates):
+        raise RuntimeError("candidate ordering mismatch")
+    return GraphBranchingState(inputs=inputs, expert_choice=int(np.argmax(scores)))
