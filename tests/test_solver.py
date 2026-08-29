@@ -9,6 +9,7 @@ from ltb_milp.branching import (
     PseudocostState,
     fractional_candidates,
     pseudocost_branch,
+    reliability_branch,
     strong_branch_scores,
 )
 from ltb_milp.problem import BinaryPackingMILP, generate_binary_packing, solve_lp_relaxation
@@ -34,7 +35,7 @@ def test_lp_relaxation_upper_bounds_integer_optimum() -> None:
 def test_branch_and_bound_matches_brute_force() -> None:
     problem = generate_binary_packing(8, 3, seed=12)
     expected = brute_force_optimum(problem)
-    for policy in ("most_fractional", "pseudocost", "strong"):
+    for policy in ("most_fractional", "pseudocost", "reliability", "strong"):
         result = solve_branch_and_bound(problem, policy=policy)
         assert result.optimal
         assert result.objective == expected
@@ -50,6 +51,27 @@ def test_pseudocost_state_updates_and_selects_candidate() -> None:
     state.update(1, "up", gain=0.5, distance=0.5)
     decision = pseudocost_branch(np.array([0.5, 0.5, 1.0]), state)
     assert decision.variable == 0
+
+
+def test_reliability_branch_probes_unreliable_candidates() -> None:
+    problem = generate_binary_packing(10, 4, seed=2)
+    lp = solve_lp_relaxation(problem)
+    assert lp.feasible and lp.x is not None
+    candidates = fractional_candidates(lp.x)
+    if candidates.size:
+        state = PseudocostState.zeros(problem.n_vars)
+        decision = reliability_branch(
+            problem,
+            lp.x,
+            lp.objective,
+            {},
+            state,
+            reliability_threshold=2,
+        )
+        assert decision.variable in candidates
+        assert decision.extra_lp_solves == 2 * candidates.size
+        assert np.all(state.down_count[candidates] == 1)
+        assert np.all(state.up_count[candidates] == 1)
 
 
 def test_strong_branch_scores_cover_all_fractional_candidates() -> None:
