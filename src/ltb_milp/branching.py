@@ -71,6 +71,10 @@ def fractional_candidates(x: np.ndarray, tol: float = 1e-7) -> np.ndarray:
     return np.flatnonzero((x > tol) & (x < 1.0 - tol))
 
 
+def _combine_gains(down_gain: np.ndarray, up_gain: np.ndarray) -> np.ndarray:
+    return np.minimum(down_gain, up_gain) + 1e-6 * np.maximum(down_gain, up_gain)
+
+
 def most_fractional(x: np.ndarray) -> BranchDecision:
     """Choose the candidate closest to 0.5."""
     candidates = fractional_candidates(x)
@@ -88,8 +92,63 @@ def pseudocost_branch(x: np.ndarray, state: PseudocostState) -> BranchDecision:
     down_means, up_means = state.means(candidates)
     down_gain = down_means * x[candidates]
     up_gain = up_means * (1.0 - x[candidates])
-    scores = np.minimum(down_gain, up_gain) + 1e-6 * np.maximum(down_gain, up_gain)
+    scores = _combine_gains(down_gain, up_gain)
     return BranchDecision(int(candidates[np.argmax(scores)]))
+
+
+def reliability_branch(
+    problem: BinaryPackingMILP,
+    x: np.ndarray,
+    parent_objective: float,
+    bounds: dict[int, tuple[float, float]],
+    state: PseudocostState,
+    *,
+    reliability_threshold: int = 2,
+) -> BranchDecision:
+    """Use pseudocosts when reliable and strong probing for under-observed candidates."""
+    if reliability_threshold <= 0:
+        raise ValueError("reliability_threshold must be positive")
+    candidates = fractional_candidates(x)
+    if candidates.size == 0:
+        raise ValueError("no fractional branching candidates")
+
+    down_means, up_means = state.means(candidates)
+    down_gain = down_means * x[candidates]
+    up_gain = up_means * (1.0 - x[candidates])
+    extra_lp_solves = 0
+    fallback_gain = abs(parent_objective) + 1.0
+
+    for pos, variable in enumerate(candidates):
+        reliable = (
+            state.down_count[variable] >= reliability_threshold
+            and state.up_count[variable] >= reliability_threshold
+        )
+        if reliable:
+            continue
+
+        observed_gains: list[float] = []
+        for direction, branch_value, distance in (
+            ("down", 0.0, float(x[variable])),
+            ("up", 1.0, float(1.0 - x[variable])),
+        ):
+            child_bounds = dict(bounds)
+            child_bounds[int(variable)] = (branch_value, branch_value)
+            child = solve_lp_relaxation(problem, child_bounds)
+            extra_lp_solves += 1
+            gain = (
+                fallback_gain
+                if not child.feasible
+                else max(0.0, parent_objective - child.objective)
+            )
+            state.update(int(variable), direction, gain, distance)
+            observed_gains.append(gain)
+        down_gain[pos], up_gain[pos] = observed_gains
+
+    scores = _combine_gains(down_gain, up_gain)
+    return BranchDecision(
+        int(candidates[np.argmax(scores)]),
+        extra_lp_solves=extra_lp_solves,
+    )
 
 
 def strong_branch_scores(
