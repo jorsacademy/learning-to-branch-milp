@@ -2,7 +2,9 @@
 
 from ltb_milp.branching import (
     BranchDecision,
+    PseudocostState,
     most_fractional,
+    pseudocost_branch,
     strong_branch,
     strong_branch_scores,
 )
@@ -45,6 +47,7 @@ __all__ = [
     "GraphBranchingState",
     "GraphInputs",
     "LPSolution",
+    "PseudocostState",
     "SolveResult",
     "candidate_features",
     "collect_root_strong_branching_dataset",
@@ -58,6 +61,7 @@ __all__ = [
     "listwise_expert_loss",
     "most_fractional",
     "predict_scores",
+    "pseudocost_branch",
     "solve_branch_and_bound",
     "solve_lp_relaxation",
     "strong_branch",
