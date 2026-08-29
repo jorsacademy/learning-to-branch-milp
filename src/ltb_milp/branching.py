@@ -25,7 +25,7 @@ class PseudocostState:
     up_count: np.ndarray
 
     @classmethod
-    def zeros(cls, n_vars: int) -> "PseudocostState":
+    def zeros(cls, n_vars: int) -> PseudocostState:
         if n_vars <= 0:
             raise ValueError("n_vars must be positive")
         return cls(
