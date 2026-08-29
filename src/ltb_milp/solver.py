@@ -12,6 +12,7 @@ from ltb_milp.branching import (
     PseudocostState,
     most_fractional,
     pseudocost_branch,
+    reliability_branch,
     strong_branch,
 )
 from ltb_milp.problem import BinaryPackingMILP, solve_lp_relaxation
@@ -64,19 +65,24 @@ def solve_branch_and_bound(
     policy: BranchPolicy | str = "most_fractional",
     max_nodes: int = 10_000,
     integrality_tol: float = 1e-7,
+    reliability_threshold: int = 2,
 ) -> SolveResult:
     """Solve a small binary MILP with depth-first branch-and-bound."""
     if max_nodes <= 0:
         raise ValueError("max_nodes must be positive")
+    if reliability_threshold <= 0:
+        raise ValueError("reliability_threshold must be positive")
 
     pseudocost_state: PseudocostState | None = None
+    stateful_policy: str | None = None
     if isinstance(policy, str):
         if policy == "most_fractional":
             branch_policy = _most_fractional_policy
         elif policy == "strong":
             branch_policy = _strong_policy
-        elif policy == "pseudocost":
+        elif policy in {"pseudocost", "reliability"}:
             pseudocost_state = PseudocostState.zeros(problem.n_vars)
+            stateful_policy = policy
             branch_policy = None
         else:
             raise ValueError("unknown branching policy")
@@ -126,7 +132,17 @@ def solve_branch_and_bound(
             continue
 
         if pseudocost_state is not None:
-            decision = pseudocost_branch(lp.x, pseudocost_state)
+            if stateful_policy == "reliability":
+                decision = reliability_branch(
+                    problem,
+                    lp.x,
+                    lp.objective,
+                    node.bounds,
+                    pseudocost_state,
+                    reliability_threshold=reliability_threshold,
+                )
+            else:
+                decision = pseudocost_branch(lp.x, pseudocost_state)
         else:
             assert branch_policy is not None
             decision = branch_policy(problem, lp.x, lp.objective, node.bounds)
