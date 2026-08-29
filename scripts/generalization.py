@@ -29,6 +29,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--gnn-checkpoint", type=Path)
     parser.add_argument("--instances-per-seed", type=int, default=10)
     parser.add_argument("--seeds", type=int, nargs="+", default=[2000, 2001, 2002, 2003, 2004])
+    parser.add_argument("--reliability-threshold", type=int, default=2)
     return parser.parse_args()
 
 
@@ -44,12 +45,15 @@ def main() -> None:
     args = parse_args()
     if args.instances_per_seed <= 0:
         raise ValueError("instances-per-seed must be positive")
+    if args.reliability_threshold <= 0:
+        raise ValueError("reliability-threshold must be positive")
     if args.checkpoint is None and args.gnn_checkpoint is None:
         raise ValueError("at least one learned checkpoint is required")
 
     policies: dict[str, object] = {
         "most_fractional": "most_fractional",
         "pseudocost": "pseudocost",
+        "reliability": "reliability",
         "strong": "strong",
     }
 
@@ -94,7 +98,11 @@ def main() -> None:
                 reference: float | None = None
                 for name, policy in policies.items():
                     started = time.perf_counter()
-                    result = solve_branch_and_bound(problem, policy=policy)
+                    result = solve_branch_and_bound(
+                        problem,
+                        policy=policy,
+                        reliability_threshold=args.reliability_threshold,
+                    )
                     elapsed = time.perf_counter() - started
                     if not result.optimal:
                         raise RuntimeError(f"{scenario.name}/{name} did not prove optimality")
