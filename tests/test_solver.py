@@ -5,7 +5,12 @@ import itertools
 import numpy as np
 import pytest
 
-from ltb_milp.branching import PseudocostState, fractional_candidates, pseudocost_branch, strong_branch_scores
+from ltb_milp.branching import (
+    PseudocostState,
+    fractional_candidates,
+    pseudocost_branch,
+    strong_branch_scores,
+)
 from ltb_milp.problem import BinaryPackingMILP, generate_binary_packing, solve_lp_relaxation
 from ltb_milp.solver import solve_branch_and_bound
 
