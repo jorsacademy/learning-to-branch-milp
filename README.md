@@ -17,7 +17,7 @@ This repository builds that pipeline from first principles on small binary MILPs
 - preserve one candidate group per B&B node,
 - extract candidate-level features,
 - train an MLP with score regression or listwise expert-choice ranking,
-- compare learned branching against classical baselines using node counts and solve statistics.
+- compare learned branching against classical baselines with repeated-seed statistics.
 
 The implementation is intentionally small and transparent. It is not a replacement for production solvers such as SCIP, Gurobi, or CPLEX.
 
@@ -65,7 +65,7 @@ Two training objectives are available:
 
 `listwise` is the default because branching is fundamentally a within-node ranking decision rather than an absolute score-prediction problem.
 
-The imitation metric is **top-1 strong-branching agreement**: the fraction of candidate groups where the learned policy and the expert choose the same variable. The benchmark computes this on a separately generated held-out root-node dataset when a checkpoint is supplied.
+The imitation metric is **top-1 strong-branching agreement**: the fraction of candidate groups where the learned policy and the expert choose the same variable.
 
 ## Installation
 
@@ -88,43 +88,52 @@ python scripts/train.py \
   --max-nodes-per-instance 64 \
   --loss listwise \
   --epochs 200 \
-  --checkpoint checkpoints/branching_mlp.pt
+  --checkpoint checkpoints/branching_listwise.pt
 ```
 
-Score-regression baseline:
+Train the score-regression baseline separately:
 
 ```bash
-python scripts/train.py --loss mse --instances 200 --vars 12 --constraints 5
+python scripts/train.py \
+  --instances 200 \
+  --vars 12 \
+  --constraints 5 \
+  --max-nodes-per-instance 64 \
+  --loss mse \
+  --epochs 200 \
+  --checkpoint checkpoints/branching_mse.pt
 ```
 
-Root-only data baseline:
+Root-only data remains available with `--dataset root`.
 
-```bash
-python scripts/train.py --dataset root --instances 200 --vars 12 --constraints 5
-```
+## Statistical benchmark
 
-## Benchmark
+The benchmark treats each seed as an independent replicate. Within a seed, every branching policy is evaluated on exactly the same generated MILP instances. Metrics are first averaged within each seed; mean, sample standard deviation, and a normal-approximation 95% confidence-interval half-width are then computed across seed means.
 
 ```bash
 python scripts/benchmark.py \
-  --instances 25 \
+  --instances-per-seed 20 \
   --vars 12 \
   --constraints 5 \
-  --checkpoint checkpoints/branching_mlp.pt
+  --seeds 1000 1001 1002 1003 1004 \
+  --mse-checkpoint checkpoints/branching_mse.pt \
+  --listwise-checkpoint checkpoints/branching_listwise.pt
 ```
 
-The benchmark compares most-fractional, strong, and learned branching while checking that all completed solves return the same optimum. With a checkpoint it also reports held-out top-1 strong-branching agreement.
+The comparison includes:
 
-## Evaluation
+- most-fractional branching,
+- strong branching,
+- learned MSE score regression,
+- learned listwise ranking,
+- mean branch-and-bound nodes processed,
+- mean LP relaxations solved,
+- wall-clock seconds per instance,
+- objective consistency checks,
+- held-out top-1 strong-branching agreement for learned models,
+- mean / sample std / 95% CI across seeds.
 
-The main solver metrics are:
-
-- branch-and-bound nodes processed,
-- LP relaxations solved,
-- incumbent objective,
-- optimality status,
-- held-out top-1 strong-branching agreement,
-- repeated-seed mean/std summaries.
+Strong branching is expected to use many additional LP solves because candidate evaluation itself solves child relaxations; wall-clock and LP counts should therefore be interpreted together with search-tree node counts.
 
 ## Project structure
 
@@ -138,6 +147,7 @@ The main solver metrics are:
 │   ├── dataset.py
 │   ├── models.py
 │   ├── policies.py
+│   ├── statistics.py
 │   └── training.py
 ├── scripts/
 │   ├── train.py
@@ -159,7 +169,7 @@ ruff check .
 
 This repository follows the learning-to-branch line associated with Khalil et al. and Gasse et al., while keeping the first implementation solver-independent and educational.
 
-The current MLP remains a baseline. Planned stages are statistical/generalization benchmarks, graph-based MILP representations, and stronger classical branching baselines.
+The current MLP remains a baseline. Planned stages are out-of-distribution/generalization benchmarks, graph-based MILP representations, and stronger classical branching baselines such as pseudocost and reliability branching.
 
 ## License
 
