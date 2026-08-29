@@ -13,7 +13,7 @@ from ltb_milp.models import BranchingMLP
 from ltb_milp.policies import learned_branch_policy
 from ltb_milp.problem import generate_binary_packing
 from ltb_milp.solver import solve_branch_and_bound
-from ltb_milp.statistics import summarize_samples
+from ltb_milp.statistics import paired_deltas, paired_percent_reductions, summarize_samples
 from ltb_milp.training import top1_expert_agreement
 
 
@@ -52,6 +52,20 @@ def print_summary(name: str, values: list[float]) -> None:
         f"{name}: mean={summary.mean:.6f} std={summary.std:.6f} "
         f"ci95=±{summary.ci95:.6f} seeds={summary.n}"
     )
+
+
+def print_paired_node_comparison(
+    reference_name: str,
+    comparison_name: str,
+    seed_nodes: dict[str, list[float]],
+) -> None:
+    deltas = paired_deltas(seed_nodes[reference_name], seed_nodes[comparison_name])
+    reductions = paired_percent_reductions(
+        seed_nodes[reference_name], seed_nodes[comparison_name]
+    )
+    print(f"\n[{comparison_name}_vs_{reference_name}]")
+    print_summary("paired_node_delta", deltas)
+    print_summary("paired_node_reduction_percent", reductions)
 
 
 def main() -> None:
@@ -134,12 +148,22 @@ def main() -> None:
     print("Repeated-seed benchmark")
     print(f"seeds={args.seeds} instances_per_seed={args.instances_per_seed}")
     print(f"reliability_threshold={args.reliability_threshold}")
+    print("confidence_intervals=Student-t 95% over seed-level replicates")
     for name in policies:
         print(f"\n[{name}]")
         print_summary("nodes_processed", seed_nodes[name])
         print_summary("lp_solves", seed_lp_solves[name])
         print_summary("wall_seconds_per_instance", seed_seconds[name])
         print_summary("objective", seed_objectives[name])
+
+    for name in policies:
+        if name != "most_fractional":
+            print_paired_node_comparison("most_fractional", name, seed_nodes)
+
+    if "reliability" in policies:
+        for name in policies:
+            if name not in {"most_fractional", "reliability"}:
+                print_paired_node_comparison("reliability", name, seed_nodes)
 
     if mlp_models or gnn_model is not None:
         print("\n[heldout_strong_branching_agreement]")
