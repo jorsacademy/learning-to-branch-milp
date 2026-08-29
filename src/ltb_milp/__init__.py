@@ -5,6 +5,7 @@ from ltb_milp.branching import (
     PseudocostState,
     most_fractional,
     pseudocost_branch,
+    reliability_branch,
     strong_branch,
     strong_branch_scores,
 )
@@ -62,6 +63,7 @@ __all__ = [
     "most_fractional",
     "predict_scores",
     "pseudocost_branch",
+    "reliability_branch",
     "solve_branch_and_bound",
     "solve_lp_relaxation",
     "strong_branch",
