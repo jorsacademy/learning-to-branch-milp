@@ -7,6 +7,7 @@ from pathlib import Path
 
 import torch
 
+from ltb_milp.gnn import BipartiteBranchingGNN, gnn_branch_policy
 from ltb_milp.models import BranchingMLP
 from ltb_milp.policies import learned_branch_policy
 from ltb_milp.problem import generate_binary_packing
@@ -24,7 +25,8 @@ class Scenario:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Evaluate learned branching under distribution shift.")
-    parser.add_argument("--checkpoint", type=Path, required=True)
+    parser.add_argument("--checkpoint", type=Path)
+    parser.add_argument("--gnn-checkpoint", type=Path)
     parser.add_argument("--instances-per-seed", type=int, default=10)
     parser.add_argument("--seeds", type=int, nargs="+", default=[2000, 2001, 2002, 2003, 2004])
     return parser.parse_args()
@@ -42,11 +44,26 @@ def main() -> None:
     args = parse_args()
     if args.instances_per_seed <= 0:
         raise ValueError("instances-per-seed must be positive")
+    if args.checkpoint is None and args.gnn_checkpoint is None:
+        raise ValueError("at least one learned checkpoint is required")
 
-    model = BranchingMLP()
-    payload = torch.load(args.checkpoint, map_location="cpu", weights_only=True)
-    model.load_state_dict(payload["model_state_dict"])
-    learned = learned_branch_policy(model)
+    policies: dict[str, object] = {
+        "most_fractional": "most_fractional",
+        "strong": "strong",
+    }
+
+    if args.checkpoint is not None:
+        model = BranchingMLP()
+        payload = torch.load(args.checkpoint, map_location="cpu", weights_only=True)
+        model.load_state_dict(payload["model_state_dict"])
+        policies["learned_mlp"] = learned_branch_policy(model)
+
+    if args.gnn_checkpoint is not None:
+        payload = torch.load(args.gnn_checkpoint, map_location="cpu", weights_only=True)
+        hidden_dim = int(payload.get("hidden_dim", 64))
+        gnn_model = BipartiteBranchingGNN(hidden_dim=hidden_dim)
+        gnn_model.load_state_dict(payload["model_state_dict"])
+        policies["learned_gnn"] = gnn_branch_policy(gnn_model)
 
     scenarios = (
         Scenario("id_12v_5c", 12, 5, None),
@@ -55,11 +72,6 @@ def main() -> None:
         Scenario("tighter_12v_5c", 12, 5, 0.30),
         Scenario("looser_12v_5c", 12, 5, 0.70),
     )
-    policies: dict[str, object] = {
-        "most_fractional": "most_fractional",
-        "strong": "strong",
-        "learned": learned,
-    }
 
     for scenario_index, scenario in enumerate(scenarios):
         seed_nodes = {name: [] for name in policies}
