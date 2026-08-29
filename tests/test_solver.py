@@ -5,7 +5,7 @@ import itertools
 import numpy as np
 import pytest
 
-from ltb_milp.branching import fractional_candidates, strong_branch_scores
+from ltb_milp.branching import PseudocostState, fractional_candidates, pseudocost_branch, strong_branch_scores
 from ltb_milp.problem import BinaryPackingMILP, generate_binary_packing, solve_lp_relaxation
 from ltb_milp.solver import solve_branch_and_bound
 
@@ -29,12 +29,22 @@ def test_lp_relaxation_upper_bounds_integer_optimum() -> None:
 def test_branch_and_bound_matches_brute_force() -> None:
     problem = generate_binary_packing(8, 3, seed=12)
     expected = brute_force_optimum(problem)
-    for policy in ("most_fractional", "strong"):
+    for policy in ("most_fractional", "pseudocost", "strong"):
         result = solve_branch_and_bound(problem, policy=policy)
         assert result.optimal
         assert result.objective == expected
         assert result.solution is not None
         assert np.all(problem.A @ result.solution <= problem.b + 1e-8)
+
+
+def test_pseudocost_state_updates_and_selects_candidate() -> None:
+    state = PseudocostState.zeros(3)
+    state.update(0, "down", gain=2.0, distance=0.5)
+    state.update(0, "up", gain=3.0, distance=0.5)
+    state.update(1, "down", gain=0.5, distance=0.5)
+    state.update(1, "up", gain=0.5, distance=0.5)
+    decision = pseudocost_branch(np.array([0.5, 0.5, 1.0]), state)
+    assert decision.variable == 0
 
 
 def test_strong_branch_scores_cover_all_fractional_candidates() -> None:
