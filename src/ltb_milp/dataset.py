@@ -15,6 +15,17 @@ from ltb_milp.problem import BinaryPackingMILP, generate_binary_packing, solve_l
 class BranchingDataset:
     features: np.ndarray
     targets: np.ndarray
+    group_sizes: tuple[int, ...]
+
+    def __post_init__(self) -> None:
+        if self.features.ndim != 2:
+            raise ValueError("features must be two-dimensional")
+        if self.targets.shape != (self.features.shape[0],):
+            raise ValueError("targets must contain one value per feature row")
+        if not self.group_sizes or any(size <= 0 for size in self.group_sizes):
+            raise ValueError("group_sizes must contain positive candidate counts")
+        if sum(self.group_sizes) != self.features.shape[0]:
+            raise ValueError("group_sizes must partition all candidate rows")
 
 
 def _append_node_examples(
@@ -24,6 +35,7 @@ def _append_node_examples(
     bounds: dict[int, tuple[float, float]],
     feature_rows: list[np.ndarray],
     targets: list[np.ndarray],
+    group_sizes: list[int],
 ) -> int:
     candidates, features = candidate_features(problem, x)
     if candidates.size == 0:
@@ -34,15 +46,24 @@ def _append_node_examples(
     scale = max(float(np.max(np.abs(scores))), 1e-8)
     feature_rows.append(features)
     targets.append(scores / scale)
+    group_sizes.append(int(candidates.size))
     return int(candidates[np.argmax(scores)])
 
 
 def _finalize_dataset(
-    feature_rows: list[np.ndarray], targets: list[np.ndarray], *, context: str
+    feature_rows: list[np.ndarray],
+    targets: list[np.ndarray],
+    group_sizes: list[int],
+    *,
+    context: str,
 ) -> BranchingDataset:
     if not feature_rows:
         raise RuntimeError(f"no fractional {context} nodes were generated")
-    return BranchingDataset(np.vstack(feature_rows), np.concatenate(targets))
+    return BranchingDataset(
+        np.vstack(feature_rows),
+        np.concatenate(targets),
+        tuple(group_sizes),
+    )
 
 
 def collect_root_strong_branching_dataset(
@@ -58,14 +79,23 @@ def collect_root_strong_branching_dataset(
 
     feature_rows: list[np.ndarray] = []
     targets: list[np.ndarray] = []
+    group_sizes: list[int] = []
     for offset in range(n_instances):
         problem = generate_binary_packing(n_vars, n_constraints, seed=seed + offset)
         lp = solve_lp_relaxation(problem)
         if not lp.feasible or lp.x is None:
             continue
-        _append_node_examples(problem, lp.x, lp.objective, {}, feature_rows, targets)
+        _append_node_examples(
+            problem,
+            lp.x,
+            lp.objective,
+            {},
+            feature_rows,
+            targets,
+            group_sizes,
+        )
 
-    return _finalize_dataset(feature_rows, targets, context="root")
+    return _finalize_dataset(feature_rows, targets, group_sizes, context="root")
 
 
 def collect_tree_strong_branching_dataset(
@@ -90,6 +120,7 @@ def collect_tree_strong_branching_dataset(
 
     feature_rows: list[np.ndarray] = []
     targets: list[np.ndarray] = []
+    group_sizes: list[int] = []
 
     for offset in range(n_instances):
         problem = generate_binary_packing(n_vars, n_constraints, seed=seed + offset)
@@ -116,6 +147,7 @@ def collect_tree_strong_branching_dataset(
                 bounds,
                 feature_rows,
                 targets,
+                group_sizes,
             )
             if variable < 0:
                 continue
@@ -129,4 +161,4 @@ def collect_tree_strong_branching_dataset(
             else:
                 stack.extend([up, down])
 
-    return _finalize_dataset(feature_rows, targets, context="tree")
+    return _finalize_dataset(feature_rows, targets, group_sizes, context="tree")
