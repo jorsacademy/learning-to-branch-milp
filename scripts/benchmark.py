@@ -7,6 +7,8 @@ from pathlib import Path
 import torch
 
 from ltb_milp.dataset import collect_root_strong_branching_dataset
+from ltb_milp.gnn import BipartiteBranchingGNN, gnn_branch_policy, gnn_top1_expert_agreement
+from ltb_milp.graph_dataset import collect_tree_graph_dataset
 from ltb_milp.models import BranchingMLP
 from ltb_milp.policies import learned_branch_policy
 from ltb_milp.problem import generate_binary_packing
@@ -23,15 +25,24 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seeds", type=int, nargs="+", default=[1000, 1001, 1002, 1003, 1004])
     parser.add_argument("--mse-checkpoint", type=Path)
     parser.add_argument("--listwise-checkpoint", type=Path)
+    parser.add_argument("--gnn-checkpoint", type=Path)
     parser.add_argument("--agreement-instances", type=int, default=30)
     return parser.parse_args()
 
 
-def load_policy(path: Path):
+def load_mlp_policy(path: Path):
     model = BranchingMLP()
     payload = torch.load(path, map_location="cpu", weights_only=True)
     model.load_state_dict(payload["model_state_dict"])
     return model, learned_branch_policy(model)
+
+
+def load_gnn_policy(path: Path):
+    payload = torch.load(path, map_location="cpu", weights_only=True)
+    hidden_dim = int(payload.get("hidden_dim", 64))
+    model = BipartiteBranchingGNN(hidden_dim=hidden_dim)
+    model.load_state_dict(payload["model_state_dict"])
+    return model, gnn_branch_policy(model)
 
 
 def print_summary(name: str, values: list[float]) -> None:
@@ -53,15 +64,20 @@ def main() -> None:
         "most_fractional": "most_fractional",
         "strong": "strong",
     }
-    learned_models: dict[str, BranchingMLP] = {}
+    mlp_models: dict[str, BranchingMLP] = {}
+    gnn_model: BipartiteBranchingGNN | None = None
+
     if args.mse_checkpoint:
-        model, policy = load_policy(args.mse_checkpoint)
-        learned_models["learned_mse"] = model
+        model, policy = load_mlp_policy(args.mse_checkpoint)
+        mlp_models["learned_mse"] = model
         policies["learned_mse"] = policy
     if args.listwise_checkpoint:
-        model, policy = load_policy(args.listwise_checkpoint)
-        learned_models["learned_listwise"] = model
+        model, policy = load_mlp_policy(args.listwise_checkpoint)
+        mlp_models["learned_listwise"] = model
         policies["learned_listwise"] = policy
+    if args.gnn_checkpoint:
+        gnn_model, policy = load_gnn_policy(args.gnn_checkpoint)
+        policies["learned_gnn"] = policy
 
     seed_nodes = {name: [] for name in policies}
     seed_lp_solves = {name: [] for name in policies}
@@ -115,9 +131,9 @@ def main() -> None:
         print_summary("wall_seconds_per_instance", seed_seconds[name])
         print_summary("objective", seed_objectives[name])
 
-    if learned_models:
+    if mlp_models or gnn_model is not None:
         print("\n[heldout_strong_branching_agreement]")
-        for name, model in learned_models.items():
+        for name, model in mlp_models.items():
             agreements: list[float] = []
             for seed in args.seeds:
                 dataset = collect_root_strong_branching_dataset(
@@ -128,6 +144,19 @@ def main() -> None:
                 )
                 agreements.append(top1_expert_agreement(model, dataset))
             print_summary(name, agreements)
+
+        if gnn_model is not None:
+            agreements = []
+            for seed in args.seeds:
+                states = collect_tree_graph_dataset(
+                    args.agreement_instances,
+                    args.vars,
+                    args.constraints,
+                    seed=seed * 100_000 + 50_000,
+                    max_nodes_per_instance=8,
+                )
+                agreements.append(gnn_top1_expert_agreement(gnn_model, states))
+            print_summary("learned_gnn", agreements)
 
 
 if __name__ == "__main__":
