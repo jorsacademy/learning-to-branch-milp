@@ -21,7 +21,12 @@ from ltb_milp.problem import (
     solve_lp_relaxation,
 )
 from ltb_milp.solver import SolveResult, solve_branch_and_bound
-from ltb_milp.training import predict_scores, train_branching_model
+from ltb_milp.training import (
+    listwise_expert_loss,
+    predict_scores,
+    top1_expert_agreement,
+    train_branching_model,
+)
 
 __all__ = [
     "BinaryPackingMILP",
@@ -35,11 +40,13 @@ __all__ = [
     "collect_tree_strong_branching_dataset",
     "generate_binary_packing",
     "learned_branch_policy",
+    "listwise_expert_loss",
     "most_fractional",
     "predict_scores",
     "solve_branch_and_bound",
     "solve_lp_relaxation",
     "strong_branch",
     "strong_branch_scores",
+    "top1_expert_agreement",
     "train_branching_model",
 ]
