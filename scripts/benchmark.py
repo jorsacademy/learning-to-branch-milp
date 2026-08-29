@@ -62,6 +62,7 @@ def main() -> None:
 
     policies: dict[str, object] = {
         "most_fractional": "most_fractional",
+        "pseudocost": "pseudocost",
         "strong": "strong",
     }
     mlp_models: dict[str, BranchingMLP] = {}
