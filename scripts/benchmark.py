@@ -6,10 +6,12 @@ from pathlib import Path
 
 import torch
 
+from ltb_milp.dataset import collect_root_strong_branching_dataset
 from ltb_milp.models import BranchingMLP
 from ltb_milp.policies import learned_branch_policy
 from ltb_milp.problem import generate_binary_packing
 from ltb_milp.solver import solve_branch_and_bound
+from ltb_milp.training import top1_expert_agreement
 
 
 def parse_args() -> argparse.Namespace:
@@ -19,6 +21,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--constraints", type=int, default=5)
     parser.add_argument("--seed", type=int, default=1000)
     parser.add_argument("--checkpoint", type=Path)
+    parser.add_argument("--agreement-instances", type=int, default=50)
     return parser.parse_args()
 
 
@@ -34,6 +37,7 @@ def main() -> None:
         "most_fractional": "most_fractional",
         "strong": "strong",
     }
+    model: BranchingMLP | None = None
     if args.checkpoint:
         model = BranchingMLP()
         payload = torch.load(args.checkpoint, map_location="cpu", weights_only=True)
@@ -66,6 +70,18 @@ def main() -> None:
         print(f"nodes: {summarize(node_counts[name])}")
         print(f"lp_solves: {summarize(lp_counts[name])}")
         print(f"objective: {summarize(objectives[name])}")
+
+    if model is not None:
+        agreement_data = collect_root_strong_branching_dataset(
+            args.agreement_instances,
+            args.vars,
+            args.constraints,
+            seed=args.seed + 100_000,
+        )
+        agreement = top1_expert_agreement(model, agreement_data)
+        print("[imitation_quality]")
+        print(f"heldout_top1_strong_branching_agreement={agreement:.6f}")
+        print(f"heldout_nodes={len(agreement_data.group_sizes)}")
 
 
 if __name__ == "__main__":
