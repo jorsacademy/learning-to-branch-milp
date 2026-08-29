@@ -19,7 +19,7 @@ This repository builds that pipeline from first principles on small binary MILPs
 - represent MILPs as bipartite variable-constraint graphs,
 - train a pure-PyTorch message-passing GNN branching policy,
 - compare learned policies with most-fractional, pseudocost, reliability, and strong branching,
-- evaluate policies with repeated-seed statistics and distribution-shift benchmarks.
+- evaluate policies with repeated-seed, paired-comparison, and distribution-shift protocols.
 
 The implementation is intentionally small and transparent. It is not a replacement for production solvers such as SCIP, Gurobi, or CPLEX.
 
@@ -118,7 +118,19 @@ python scripts/benchmark.py \
   --gnn-checkpoint checkpoints/branching_gnn.pt
 ```
 
-The comparison includes most-fractional, pseudocost, reliability, strong branching, MLP-MSE, MLP-listwise, and GNN. Metrics include branch-and-bound nodes, LP solves, wall-clock time, objective consistency, held-out expert agreement, and repeated-seed mean / sample std / normal-approximation 95% CI.
+The comparison includes most-fractional, pseudocost, reliability, strong branching, MLP-MSE, MLP-listwise, and GNN. All policies solve the same generated instances within a seed. Metrics are averaged within seed before cross-seed inference.
+
+For each metric, the benchmark reports mean, sample standard deviation, and a two-sided **Student-t 95% confidence interval** over seed-level replicates. Student-t intervals are used instead of a fixed 1.96 normal approximation because the default number of seeds is small.
+
+The benchmark also reports paired node comparisons:
+
+- comparison-minus-reference node delta,
+- percentage node reduction relative to most-fractional,
+- percentage node reduction relative to reliability branching where applicable.
+
+Positive `paired_node_reduction_percent` means the comparison policy processed fewer branch-and-bound nodes than the reference policy. Paired summaries preserve the fact that policies are evaluated on the same seed-level instance sets and are generally more informative than comparing two independent marginal confidence intervals.
+
+Wall-clock time remains a secondary metric for these small Python experiments because interpreter, model-inference, and LP-solver overhead can dominate. Node count and LP solve count are the primary algorithmic metrics.
 
 ## Generalization benchmark
 
@@ -170,7 +182,7 @@ ruff check .
 
 ## Research lineage
 
-The repository follows the learning-to-branch line associated with Khalil et al. and Gasse et al. The current implementation now contains a progression from low-cost hand-designed branching rules through selective strong probing to learned MLP/GNN policies, all evaluated under the same transparent branch-and-bound engine.
+The repository follows the learning-to-branch line associated with Khalil et al. and Gasse et al. The current implementation contains a progression from low-cost hand-designed branching rules through selective strong probing to learned MLP/GNN policies, all evaluated under the same transparent branch-and-bound engine and a paired repeated-seed protocol.
 
 ## License
 
