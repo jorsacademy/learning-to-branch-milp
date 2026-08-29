@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import argparse
-import statistics
 from pathlib import Path
+import time
 
 import torch
 
@@ -11,77 +11,123 @@ from ltb_milp.models import BranchingMLP
 from ltb_milp.policies import learned_branch_policy
 from ltb_milp.problem import generate_binary_packing
 from ltb_milp.solver import solve_branch_and_bound
+from ltb_milp.statistics import summarize_samples
 from ltb_milp.training import top1_expert_agreement
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Benchmark MILP branching policies.")
-    parser.add_argument("--instances", type=int, default=25)
+    parser = argparse.ArgumentParser(description="Repeated-seed benchmark of MILP branching policies.")
+    parser.add_argument("--instances-per-seed", type=int, default=20)
     parser.add_argument("--vars", type=int, default=12)
     parser.add_argument("--constraints", type=int, default=5)
-    parser.add_argument("--seed", type=int, default=1000)
-    parser.add_argument("--checkpoint", type=Path)
-    parser.add_argument("--agreement-instances", type=int, default=50)
+    parser.add_argument("--seeds", type=int, nargs="+", default=[1000, 1001, 1002, 1003, 1004])
+    parser.add_argument("--mse-checkpoint", type=Path)
+    parser.add_argument("--listwise-checkpoint", type=Path)
+    parser.add_argument("--agreement-instances", type=int, default=30)
     return parser.parse_args()
 
 
-def summarize(values: list[float]) -> str:
-    mean = statistics.fmean(values)
-    std = statistics.stdev(values) if len(values) > 1 else 0.0
-    return f"mean={mean:.3f} std={std:.3f}"
+def load_policy(path: Path):
+    model = BranchingMLP()
+    payload = torch.load(path, map_location="cpu", weights_only=True)
+    model.load_state_dict(payload["model_state_dict"])
+    return model, learned_branch_policy(model)
+
+
+def print_summary(name: str, values: list[float]) -> None:
+    summary = summarize_samples(values)
+    print(
+        f"{name}: mean={summary.mean:.6f} std={summary.std:.6f} "
+        f"ci95=±{summary.ci95:.6f} seeds={summary.n}"
+    )
 
 
 def main() -> None:
     args = parse_args()
+    if args.instances_per_seed <= 0 or args.agreement_instances <= 0:
+        raise ValueError("instance counts must be positive")
+    if not args.seeds:
+        raise ValueError("at least one seed is required")
+
     policies: dict[str, object] = {
         "most_fractional": "most_fractional",
         "strong": "strong",
     }
-    model: BranchingMLP | None = None
-    if args.checkpoint:
-        model = BranchingMLP()
-        payload = torch.load(args.checkpoint, map_location="cpu", weights_only=True)
-        model.load_state_dict(payload["model_state_dict"])
-        policies["learned"] = learned_branch_policy(model)
+    learned_models: dict[str, BranchingMLP] = {}
+    if args.mse_checkpoint:
+        model, policy = load_policy(args.mse_checkpoint)
+        learned_models["learned_mse"] = model
+        policies["learned_mse"] = policy
+    if args.listwise_checkpoint:
+        model, policy = load_policy(args.listwise_checkpoint)
+        learned_models["learned_listwise"] = model
+        policies["learned_listwise"] = policy
 
-    node_counts = {name: [] for name in policies}
-    lp_counts = {name: [] for name in policies}
-    objectives = {name: [] for name in policies}
+    seed_nodes = {name: [] for name in policies}
+    seed_lp_solves = {name: [] for name in policies}
+    seed_seconds = {name: [] for name in policies}
+    seed_objectives = {name: [] for name in policies}
 
-    for offset in range(args.instances):
-        problem = generate_binary_packing(
-            args.vars,
-            args.constraints,
-            seed=args.seed + offset,
-        )
-        reference_objective: float | None = None
-        for name, policy in policies.items():
-            result = solve_branch_and_bound(problem, policy=policy)
-            node_counts[name].append(float(result.nodes_processed))
-            lp_counts[name].append(float(result.lp_solves))
-            objectives[name].append(result.objective)
-            if reference_objective is None:
-                reference_objective = result.objective
-            elif abs(result.objective - reference_objective) > 1e-6:
-                raise RuntimeError("branching policies returned inconsistent optima")
+    for seed in args.seeds:
+        per_seed_nodes = {name: [] for name in policies}
+        per_seed_lp = {name: [] for name in policies}
+        per_seed_seconds = {name: [] for name in policies}
+        per_seed_objectives = {name: [] for name in policies}
 
+        for offset in range(args.instances_per_seed):
+            problem = generate_binary_packing(
+                args.vars,
+                args.constraints,
+                seed=seed * 100_000 + offset,
+            )
+            reference_objective: float | None = None
+            for name, policy in policies.items():
+                started = time.perf_counter()
+                result = solve_branch_and_bound(problem, policy=policy)
+                elapsed = time.perf_counter() - started
+                if not result.optimal:
+                    raise RuntimeError(f"{name} hit the node limit before proving optimality")
+
+                per_seed_nodes[name].append(float(result.nodes_processed))
+                per_seed_lp[name].append(float(result.lp_solves))
+                per_seed_seconds[name].append(elapsed)
+                per_seed_objectives[name].append(result.objective)
+
+                if reference_objective is None:
+                    reference_objective = result.objective
+                elif abs(result.objective - reference_objective) > 1e-6:
+                    raise RuntimeError("branching policies returned inconsistent optima")
+
+        for name in policies:
+            seed_nodes[name].append(sum(per_seed_nodes[name]) / len(per_seed_nodes[name]))
+            seed_lp_solves[name].append(sum(per_seed_lp[name]) / len(per_seed_lp[name]))
+            seed_seconds[name].append(sum(per_seed_seconds[name]) / len(per_seed_seconds[name]))
+            seed_objectives[name].append(
+                sum(per_seed_objectives[name]) / len(per_seed_objectives[name])
+            )
+
+    print("Repeated-seed benchmark")
+    print(f"seeds={args.seeds} instances_per_seed={args.instances_per_seed}")
     for name in policies:
-        print(f"[{name}]")
-        print(f"nodes: {summarize(node_counts[name])}")
-        print(f"lp_solves: {summarize(lp_counts[name])}")
-        print(f"objective: {summarize(objectives[name])}")
+        print(f"\n[{name}]")
+        print_summary("nodes_processed", seed_nodes[name])
+        print_summary("lp_solves", seed_lp_solves[name])
+        print_summary("wall_seconds_per_instance", seed_seconds[name])
+        print_summary("objective", seed_objectives[name])
 
-    if model is not None:
-        agreement_data = collect_root_strong_branching_dataset(
-            args.agreement_instances,
-            args.vars,
-            args.constraints,
-            seed=args.seed + 100_000,
-        )
-        agreement = top1_expert_agreement(model, agreement_data)
-        print("[imitation_quality]")
-        print(f"heldout_top1_strong_branching_agreement={agreement:.6f}")
-        print(f"heldout_nodes={len(agreement_data.group_sizes)}")
+    if learned_models:
+        print("\n[heldout_strong_branching_agreement]")
+        for name, model in learned_models.items():
+            agreements: list[float] = []
+            for seed in args.seeds:
+                dataset = collect_root_strong_branching_dataset(
+                    args.agreement_instances,
+                    args.vars,
+                    args.constraints,
+                    seed=seed * 100_000 + 50_000,
+                )
+                agreements.append(top1_expert_agreement(model, dataset))
+            print_summary(name, agreements)
 
 
 if __name__ == "__main__":
