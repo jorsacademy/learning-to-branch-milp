@@ -15,15 +15,15 @@ This repository builds that pipeline from first principles on small binary MILPs
 - score candidates with strong branching,
 - collect expert labels across complete search-tree trajectories,
 - preserve one candidate group per B&B node,
-- train an MLP with score regression or listwise expert-choice ranking,
+- train MLP score-regression and listwise-ranking policies,
 - represent MILPs as bipartite variable-constraint graphs,
 - train a pure-PyTorch message-passing GNN branching policy,
-- compare learned policies against most-fractional, pseudocost, and strong branching,
+- compare learned policies with most-fractional, pseudocost, reliability, and strong branching,
 - evaluate policies with repeated-seed statistics and distribution-shift benchmarks.
 
 The implementation is intentionally small and transparent. It is not a replacement for production solvers such as SCIP, Gurobi, or CPLEX.
 
-## Initial problem family
+## Problem family
 
 The benchmark uses random binary packing MILPs:
 
@@ -37,17 +37,18 @@ subject to
 Ax \le b, \qquad x \in \{0,1\}^n.
 \]
 
-Internally the LP relaxation is solved with `scipy.optimize.linprog`. The generator also supports controlled RHS `tightness` for distribution-shift experiments.
+LP relaxations are solved with `scipy.optimize.linprog`. The generator also supports controlled RHS `tightness` for distribution-shift experiments.
 
 ## Branching policies
 
 - **Most fractional:** branch on the variable closest to 0.5.
-- **Pseudocost:** maintain historical per-variable down/up unit bound degradations from solved child LPs, then score candidates using the predicted two-sided degradation.
-- **Strong branching:** solve both child LP relaxations for each candidate and choose the strongest bound improvement.
+- **Pseudocost:** maintain historical per-variable down/up unit bound degradations and estimate two-sided branching gains without probing every candidate.
+- **Reliability branching:** use pseudocost estimates once both directions have enough observations; otherwise selectively solve the candidate's two child LP relaxations and update its pseudocost statistics.
+- **Strong branching:** solve both child LP relaxations for every candidate and choose the strongest bound improvement.
 - **MLP learned policy:** rank candidates from inexpensive hand-engineered features.
 - **Bipartite GNN policy:** score candidates after variable-to-constraint and constraint-to-variable message passing over the MILP coefficient graph.
 
-Pseudocost branching starts with neutral fallback estimates and updates its statistics online as the search observes child-node LP bounds. It therefore avoids the repeated probing LP solves required by strong branching.
+The default reliability threshold is `2` observations per direction and can be changed in benchmark scripts with `--reliability-threshold`.
 
 ## Imitation data and ranking
 
@@ -60,16 +61,7 @@ Top-1 strong-branching agreement is used as the imitation metric.
 
 ## Bipartite GNN representation
 
-The graph model uses:
-
-- one node for each variable,
-- one node for each constraint,
-- normalized MILP coefficients as bipartite edge weights,
-- variable features including LP value, fractionality, objective coefficient, and column density,
-- constraint features including RHS, LP activity, slack, and row density,
-- two-way message passing before candidate scoring.
-
-The GNN is implemented in pure PyTorch, without PyTorch Geometric or DGL. Inference graph construction does **not** call strong branching; expert calls are used only when generating labeled training states.
+The graph model uses variable nodes, constraint nodes, normalized MILP coefficients as bipartite edge weights, normalized variable/constraint features, and two-way message passing before candidate scoring. The GNN is implemented in pure PyTorch. Inference graph construction does **not** call strong branching; expert calls are used only to generate training labels.
 
 ## Installation
 
@@ -112,11 +104,7 @@ python scripts/train_gnn.py \
   --checkpoint checkpoints/branching_gnn.pt
 ```
 
-The GNN is trained with listwise expert-choice cross entropy and reports training-set top-1 expert agreement.
-
 ## Statistical benchmark
-
-The repeated-seed benchmark evaluates active learned models and classical policies on exactly the same MILP instances:
 
 ```bash
 python scripts/benchmark.py \
@@ -124,39 +112,26 @@ python scripts/benchmark.py \
   --vars 12 \
   --constraints 5 \
   --seeds 1000 1001 1002 1003 1004 \
+  --reliability-threshold 2 \
   --mse-checkpoint checkpoints/branching_mse.pt \
   --listwise-checkpoint checkpoints/branching_listwise.pt \
   --gnn-checkpoint checkpoints/branching_gnn.pt
 ```
 
-The comparison includes:
-
-- most-fractional branching,
-- pseudocost branching,
-- strong branching,
-- learned MLP score regression,
-- learned MLP listwise ranking,
-- learned bipartite GNN,
-- branch-and-bound node count,
-- LP solve count,
-- wall-clock time,
-- objective-consistency checks,
-- held-out strong-branching top-1 agreement for learned models,
-- mean / sample std / normal-approximation 95% CI across seeds.
+The comparison includes most-fractional, pseudocost, reliability, strong branching, MLP-MSE, MLP-listwise, and GNN. Metrics include branch-and-bound nodes, LP solves, wall-clock time, objective consistency, held-out expert agreement, and repeated-seed mean / sample std / normal-approximation 95% CI.
 
 ## Generalization benchmark
-
-MLP and GNN checkpoints can be evaluated together under distribution shift:
 
 ```bash
 python scripts/generalization.py \
   --checkpoint checkpoints/branching_listwise.pt \
   --gnn-checkpoint checkpoints/branching_gnn.pt \
+  --reliability-threshold 2 \
   --instances-per-seed 10 \
   --seeds 2000 2001 2002 2003 2004
 ```
 
-Scenarios include the nominal `12v/5c` distribution, larger `16v/5c`, `20v/8c`, tighter packing, and looser packing. Most-fractional, pseudocost, strong, and active learned policies solve the same generated instances before repeated-seed summaries are computed.
+Scenarios include nominal `12v/5c`, larger `16v/5c`, larger `20v/8c`, tighter packing, and looser packing. All active policies solve the same generated instances before repeated-seed summaries are computed.
 
 ## Project structure
 
@@ -195,7 +170,7 @@ ruff check .
 
 ## Research lineage
 
-The repository follows the learning-to-branch line associated with Khalil et al. and Gasse et al. The MLP remains a transparent baseline, the bipartite message-passing model provides a graph-based learned policy, and pseudocost now provides a stronger low-overhead classical baseline. The next classical stage is reliability branching, which combines pseudocost history with selective strong-branch probing for insufficiently observed candidates.
+The repository follows the learning-to-branch line associated with Khalil et al. and Gasse et al. The current implementation now contains a progression from low-cost hand-designed branching rules through selective strong probing to learned MLP/GNN policies, all evaluated under the same transparent branch-and-bound engine.
 
 ## License
 
