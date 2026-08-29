@@ -17,7 +17,8 @@ This repository builds that pipeline from first principles on small binary MILPs
 - preserve one candidate group per B&B node,
 - extract candidate-level features,
 - train an MLP with score regression or listwise expert-choice ranking,
-- compare learned branching against classical baselines with repeated-seed statistics.
+- compare learned branching against classical baselines with repeated-seed statistics,
+- evaluate learned policies under size and packing-distribution shift.
 
 The implementation is intentionally small and transparent. It is not a replacement for production solvers such as SCIP, Gurobi, or CPLEX.
 
@@ -35,7 +36,7 @@ subject to
 Ax \le b, \qquad x \in \{0,1\}^n.
 \]
 
-Internally the LP relaxation is solved with `scipy.optimize.linprog` after converting the maximization objective to minimization form.
+Internally the LP relaxation is solved with `scipy.optimize.linprog` after converting the maximization objective to minimization form. The generator can also fix the RHS `tightness` as a fraction of each row's total coefficient mass, enabling controlled distribution-shift experiments.
 
 ## Branching policies
 
@@ -120,20 +121,26 @@ python scripts/benchmark.py \
   --listwise-checkpoint checkpoints/branching_listwise.pt
 ```
 
-The comparison includes:
+The comparison includes most-fractional, strong branching, learned MSE, and learned listwise policies, with node count, LP solves, wall-clock time, objective consistency checks, held-out expert agreement, and mean / sample std / 95% CI across seeds.
 
-- most-fractional branching,
-- strong branching,
-- learned MSE score regression,
-- learned listwise ranking,
-- mean branch-and-bound nodes processed,
-- mean LP relaxations solved,
-- wall-clock seconds per instance,
-- objective consistency checks,
-- held-out top-1 strong-branching agreement for learned models,
-- mean / sample std / 95% CI across seeds.
+## Generalization benchmark
 
-Strong branching is expected to use many additional LP solves because candidate evaluation itself solves child relaxations; wall-clock and LP counts should therefore be interpreted together with search-tree node counts.
+A separate OOD benchmark evaluates one learned checkpoint on problem distributions that differ from the nominal `12 variables / 5 constraints` training regime:
+
+- in-distribution `12v / 5c`,
+- larger `16v / 5c`,
+- larger and more constrained `20v / 8c`,
+- tighter packing with `tightness=0.30`,
+- looser packing with `tightness=0.70`.
+
+```bash
+python scripts/generalization.py \
+  --checkpoint checkpoints/branching_listwise.pt \
+  --instances-per-seed 10 \
+  --seeds 2000 2001 2002 2003 2004
+```
+
+Each scenario uses paired instances across most-fractional, strong, and learned branching and reports repeated-seed mean/std/95% CI for B&B node count, LP solves, and wall-clock time. This tests whether the candidate-feature MLP transfers beyond the distribution used to generate its imitation data.
 
 ## Project structure
 
@@ -151,7 +158,8 @@ Strong branching is expected to use many additional LP solves because candidate 
 │   └── training.py
 ├── scripts/
 │   ├── train.py
-│   └── benchmark.py
+│   ├── benchmark.py
+│   └── generalization.py
 ├── tests/
 ├── .github/workflows/ci.yml
 ├── pyproject.toml
@@ -169,7 +177,7 @@ ruff check .
 
 This repository follows the learning-to-branch line associated with Khalil et al. and Gasse et al., while keeping the first implementation solver-independent and educational.
 
-The current MLP remains a baseline. Planned stages are out-of-distribution/generalization benchmarks, graph-based MILP representations, and stronger classical branching baselines such as pseudocost and reliability branching.
+The current MLP remains a baseline. Planned stages are graph-based MILP representations and stronger classical branching baselines such as pseudocost and reliability branching.
 
 ## License
 
