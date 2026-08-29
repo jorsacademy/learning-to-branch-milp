@@ -14,8 +14,9 @@ This repository builds that pipeline from first principles on small binary MILPs
 - identify fractional branching candidates,
 - score candidates with strong branching,
 - extract candidate-level features,
-- train an MLP ranking policy by imitation learning,
-- compare learned branching against classical baselines using node counts and solve statistics.
+- collect imitation targets from the expert,
+- train an MLP to predict strong-branching scores,
+- compare learned branching against classical baselines using node counts and LP solve counts.
 
 The implementation is intentionally small and transparent. It is not a replacement for production solvers such as SCIP, Gurobi, or CPLEX.
 
@@ -38,23 +39,121 @@ Internally the LP relaxation is solved with `scipy.optimize.linprog` after conve
 ## Branching policies
 
 - **Most fractional:** branch on the variable closest to 0.5.
-- **Strong branching:** temporarily solve both child LP relaxations for every candidate and choose the candidate with the strongest bound improvement.
-- **Learned policy:** rank candidate variables from inexpensive node/variable features using an MLP trained on strong-branching labels.
+- **Strong branching:** temporarily solve both child LP relaxations for every fractional candidate and choose the candidate with the strongest lower child-bound improvement.
+- **Learned policy:** rank candidate variables from inexpensive features using an MLP trained to regress normalized strong-branching scores.
 
-## Evaluation
+The first learned dataset uses root-node candidates. This makes the imitation pipeline reproducible and easy to audit before extending data collection to deeper branch-and-bound nodes.
 
-The main solver metrics are:
+## Candidate features
+
+The initial MLP receives six features per fractional candidate:
+
+- LP value,
+- fractionality,
+- normalized objective coefficient,
+- normalized column activity,
+- constraint-column density,
+- normalized coefficient magnitude summary.
+
+## Project structure
+
+```text
+.
+├── src/ltb_milp/
+│   ├── problem.py
+│   ├── branching.py
+│   ├── features.py
+│   ├── solver.py
+│   ├── dataset.py
+│   ├── models.py
+│   ├── training.py
+│   └── policies.py
+├── scripts/
+│   ├── train.py
+│   └── benchmark.py
+├── tests/
+├── .github/workflows/ci.yml
+├── pyproject.toml
+└── LICENSE
+```
+
+## Installation
+
+```bash
+python -m venv .venv
+source .venv/bin/activate  # Windows: .venv\Scripts\activate
+python -m pip install --upgrade pip
+pip install -e ".[dev]"
+```
+
+## Train the branching model
+
+Generate strong-branching supervision and fit the MLP:
+
+```bash
+python scripts/train.py \
+  --instances 200 \
+  --vars 12 \
+  --constraints 5 \
+  --epochs 200 \
+  --checkpoint checkpoints/branching_mlp.pt
+```
+
+## Benchmark branching policies
+
+Compare most-fractional and strong branching:
+
+```bash
+python scripts/benchmark.py --instances 25 --vars 12 --constraints 5
+```
+
+Include the learned policy:
+
+```bash
+python scripts/benchmark.py \
+  --instances 25 \
+  --vars 12 \
+  --constraints 5 \
+  --checkpoint checkpoints/branching_mlp.pt
+```
+
+The benchmark verifies that all policies recover the same optimum and reports mean/std for:
 
 - branch-and-bound nodes processed,
-- LP relaxations solved,
-- incumbent objective,
-- optimality status,
-- branching agreement with strong branching,
-- repeated-seed mean/std summaries.
+- total LP relaxations solved,
+- final objective value.
+
+Strong branching typically spends more LP solves per node because it evaluates candidate children explicitly. The learned policy is intended to approximate strong branching without paying those extra expert LP solves at inference time.
+
+## Tests
+
+The test suite includes a brute-force cross-check on small instances to verify that branch-and-bound returns the exact binary optimum.
+
+```bash
+pytest
+ruff check .
+```
+
+## Research roadmap
+
+Planned extensions include:
+
+- collect imitation data at deeper branch-and-bound nodes,
+- pseudocost and reliability-branching baselines,
+- candidate ranking losses instead of pure score regression,
+- bipartite MILP graph representations,
+- GNN branching policies following the Gasse et al. line,
+- harder instance families such as set covering and combinatorial auctions,
+- repeated-seed confidence intervals and branching-agreement statistics.
 
 ## Research lineage
 
 This repository follows the learning-to-branch line associated with Khalil et al. and Gasse et al., while keeping the first implementation solver-independent and educational.
+
+## References
+
+1. Khalil, E. B. et al. (2016). Learning to Branch in Mixed Integer Programming. AAAI.
+2. Gasse, M. et al. (2019). Exact Combinatorial Optimization with Graph Convolutional Neural Networks. NeurIPS.
 
 ## License
 
