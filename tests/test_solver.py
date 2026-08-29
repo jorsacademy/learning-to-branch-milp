@@ -3,6 +3,7 @@ from __future__ import annotations
 import itertools
 
 import numpy as np
+import pytest
 
 from ltb_milp.branching import fractional_candidates, strong_branch_scores
 from ltb_milp.problem import BinaryPackingMILP, generate_binary_packing, solve_lp_relaxation
@@ -47,3 +48,16 @@ def test_strong_branch_scores_cover_all_fractional_candidates() -> None:
         assert scores.shape == candidates.shape
         assert solves == 2 * candidates.size
         assert np.all(scores >= 0)
+
+
+def test_tightness_controls_rhs_scale() -> None:
+    tight = generate_binary_packing(10, 4, seed=9, tightness=0.3)
+    loose = generate_binary_packing(10, 4, seed=9, tightness=0.7)
+    assert np.array_equal(tight.A, loose.A)
+    assert np.array_equal(tight.c, loose.c)
+    assert np.all(tight.b < loose.b)
+
+
+def test_tightness_validation() -> None:
+    with pytest.raises(ValueError, match="tightness"):
+        generate_binary_packing(8, 3, tightness=1.0)
