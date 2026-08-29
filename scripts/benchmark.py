@@ -27,6 +27,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--listwise-checkpoint", type=Path)
     parser.add_argument("--gnn-checkpoint", type=Path)
     parser.add_argument("--agreement-instances", type=int, default=30)
+    parser.add_argument("--reliability-threshold", type=int, default=2)
     return parser.parse_args()
 
 
@@ -57,12 +58,15 @@ def main() -> None:
     args = parse_args()
     if args.instances_per_seed <= 0 or args.agreement_instances <= 0:
         raise ValueError("instance counts must be positive")
+    if args.reliability_threshold <= 0:
+        raise ValueError("reliability-threshold must be positive")
     if not args.seeds:
         raise ValueError("at least one seed is required")
 
     policies: dict[str, object] = {
         "most_fractional": "most_fractional",
         "pseudocost": "pseudocost",
+        "reliability": "reliability",
         "strong": "strong",
     }
     mlp_models: dict[str, BranchingMLP] = {}
@@ -100,7 +104,11 @@ def main() -> None:
             reference_objective: float | None = None
             for name, policy in policies.items():
                 started = time.perf_counter()
-                result = solve_branch_and_bound(problem, policy=policy)
+                result = solve_branch_and_bound(
+                    problem,
+                    policy=policy,
+                    reliability_threshold=args.reliability_threshold,
+                )
                 elapsed = time.perf_counter() - started
                 if not result.optimal:
                     raise RuntimeError(f"{name} hit the node limit before proving optimality")
@@ -125,6 +133,7 @@ def main() -> None:
 
     print("Repeated-seed benchmark")
     print(f"seeds={args.seeds} instances_per_seed={args.instances_per_seed}")
+    print(f"reliability_threshold={args.reliability_threshold}")
     for name in policies:
         print(f"\n[{name}]")
         print_summary("nodes_processed", seed_nodes[name])
